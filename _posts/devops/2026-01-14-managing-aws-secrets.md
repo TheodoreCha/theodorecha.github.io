@@ -2,7 +2,7 @@
 layout: post
 title: 'Managing AWS Secrets with Terraform and Git-Crypt'
 subtitle: 'AWS and Terraform'
-date: 2024-03-20
+date: 2026-01-14
 author: 'Theo Cha'
 tags:
   - devops
