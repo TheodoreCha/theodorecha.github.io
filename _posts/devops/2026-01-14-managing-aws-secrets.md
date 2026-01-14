@@ -1,4 +1,12 @@
-# Managing AWS Secrets with Terraform and Git-Crypt
+---
+layout: post
+title: 'Managing AWS Secrets with Terraform and Git-Crypt'
+subtitle: 'AWS and Terraform'
+date: 2024-03-20
+author: 'Theo Cha'
+tags:
+  - devops
+---
 
 Managing secrets in a team environment is challenging. You need version control, audit trails, and security - all while keeping things simple enough for developers to use daily.
 
