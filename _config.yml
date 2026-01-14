@@ -3,10 +3,10 @@ title: Theo Blog
 SEOTitle: Theo Blog
 header-img: img/home-bg.jpg
 email: theodorcha@gmail.com
-description: "Programmers is not people who codes. Programmers are people who solve business problems."
-keyword: "Theo Blog, Fullstack developer, Ruby on Rails, React, AWS, Startup, Sweden, Stockholm, Marketplace, Rspec, Ruby, Javascript"
-url: "https://theodorecha.github.io"
-baseurl: "" # for example, '/blog' if your blog hosted on 'host/blog'
+description: 'Programmers is not people who codes. Programmers are people who solve business problems.'
+keyword: 'Theo Blog, Fullstack developer, Ruby on Rails, React, AWS, Startup, Sweden, Stockholm, Marketplace, Rspec, Ruby, Javascript'
+url: 'https://theodorecha.github.io'
+baseurl: '' # for example, '/blog' if your blog hosted on 'host/blog'
 
 # Publish posts or collection documents with a future date.
 future: true
@@ -18,7 +18,7 @@ RSS: false
 github_username: TheodoreCha
 #twitter_username: huxpro
 #facebook_username:  huxpro
-linkedin_username:  tja-cha
+linkedin_username: tja-cha
 
 # Build settings
 # from 2016, 'pygments' is unsupported on GitHub Pages. Use 'rouge' for highlighting instead.
@@ -27,12 +27,12 @@ permalink: pretty
 paginate: 10
 exclude:
   [
-    "less",
-    "node_modules",
-    "Gruntfile.js",
-    "package.json",
-    "README.md",
-    "README.zh.md",
+    'less',
+    'node_modules',
+    'Gruntfile.js',
+    'package.json',
+    'README.md',
+    'README.zh.md',
   ]
 anchorjs: true # if you want to customize anchor. check out line:181 of `post.html`
 # If you have timezone issue (e.g. #68) in China, uncomment to use this:
@@ -70,7 +70,7 @@ netease_comment: false
 
 # Sidebar settings
 sidebar: true # whether or not using Sidebar.
-sidebar-about-description: "An entrepreneur and Ruby on Rails developer living in Stockholm."
+sidebar-about-description: 'An entrepreneur and fullstack developer living in Stockholm.'
 sidebar-avatar: https://github.com/theodorecha.png # use absolute URL, seeing it's used in both `/` and `/about/`
 
 # Featured Tags
@@ -78,12 +78,11 @@ featured-tags: true # whether or not using Feature-Tags
 featured-condition-size: 1 # A tag will be featured if the size of it is more than this condition value
 
 # Progressive Web Apps
-chrome-tab-theme-color: "#000000"
+chrome-tab-theme-color: '#000000'
 service-worker: true
 
 # MathJax rendering for layout:page (e.g. post preview)
 page-mathjax: false
-
 # Friends
 #friends:
 #  [

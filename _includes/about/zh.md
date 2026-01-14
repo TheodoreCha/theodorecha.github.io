@@ -6,6 +6,8 @@ I studied BS, Computer Science at Digital Seoul university.
 
 I live in Stockholm as a Swedish Citizen. I speak Korean as my mother language and English and Chinese at a professional level and Swedish at a beginner level.
 
+Cheers! 🤙
+
 ##### Appearence
 
 - [Breakit – Mar 2022][1] · Breakit is Sweden's news site about tech companies and startups.
