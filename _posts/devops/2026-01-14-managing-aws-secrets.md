@@ -260,12 +260,12 @@ In the PR diff, reviewers see:
 
 ```diff
   "sops": {
--   "lastmodified": "2024-01-15T10:00:00Z",
-+   "lastmodified": "2024-01-16T14:30:00Z",
+-   "lastmodified": "2024-01-xxT10:00:00Z",
++   "lastmodified": "2024-01-xxT14:30:00Z",
     ...
   },
-- "API_KEY": "ENC[AES256_GCM,data:abc123...,type:str]",
-+ "API_KEY": "ENC[AES256_GCM,data:xyz789...,type:str]",
+- "API_KEY": "ENC[Axxxxxxxxx:...,type:str]",
++ "API_KEY": "ENC[Axxxxxxxxx:...,type:str]",
 ```
 
 They can see:
