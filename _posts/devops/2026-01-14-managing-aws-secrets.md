@@ -1,6 +1,6 @@
 ---
 layout: post
-title: 'Managing AWS Secrets with Terraform and Git-Crypt'
+title: 'How to Manage Secrets Securely with SOPS and AWS KMS'
 subtitle: 'AWS and Terraform'
 date: 2026-01-14
 author: 'Theo Cha'
@@ -8,310 +8,371 @@ tags:
   - devops
 ---
 
-Managing secrets in a team environment is challenging. You need version control, audit trails, and security - all while keeping things simple enough for developers to use daily.
+Managing secrets like API keys, database passwords, and encryption keys is one of the most critical challenges in software development. This guide walks you through setting up a secure, auditable, and team-friendly secrets management system using SOPS and AWS KMS.
 
-This post explains how we set up a secure secrets management system using **Terraform**, **AWS Secrets Manager**, and **git-crypt**.
+## The Problem with Traditional Secrets Management
 
-## The Problem
+Most teams start with one of these approaches:
 
-| Challenge                              | Impact                                |
-| -------------------------------------- | ------------------------------------- |
-| Secrets edited manually in AWS console | No history of who changed what        |
-| No review process                      | Mistakes go straight to production    |
-| No backup                              | Accidentally deleted secrets are gone |
-| Scattered across services              | Hard to audit or rotate               |
+1. **Environment variables** - Easy to leak, hard to track changes
+2. **Shared password managers** - No version control, manual sync
+3. **Plain text in private repos** - One breach exposes everything
+4. **AWS Secrets Manager only** - No code review for changes, no Git history
 
-## The Solution
+Each has significant drawbacks for growing teams.
 
-A dedicated private repository that:
-
-- Stores secrets as JSON files
-- Encrypts them automatically with git-crypt
-- Uses Terraform to sync to AWS Secrets Manager
-- Requires PR reviews for all changes
+## A Better Approach: SOPS + AWS KMS + Git
 
 ```
-Local JSON files → git-crypt encrypts → GitHub (encrypted) → Terraform → AWS Secrets Manager
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           The Solution                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────┐
+│        AWS KMS            │
+│   (Master Encryption Key) │
+└─────────┬─────────────────┘
+          │
+encrypt/decrypt requests with SOPS
+          │
+          ▼
+  ┌─────────┐    push      ┌──────────────┐   terraform   ┌─────────────────┐
+  │ Editor  │ ◄──────────► │ .enc.json    │ ────apply───► │ Secrets Manager │
+  │ (plain) │              │ (encrypted)  │               │ (for apps)      │
+  └─────────┘              └──────────────┘               └─────────────────┘
+       │                          │                              │
+       ▼                          ▼                              ▼
+  In memory only            Stored in Git                 Apps read from here
+  (never on disk)           (safe to commit)
 ```
 
-## Architecture Overview
+### Why This Works
 
-```
-aws-secrets/
-├── backend.hcl          # S3 backend configuration
-├── terraform.tfvars     # Variables (encrypted by git-crypt)
-├── main.tf              # AWS provider
-├── variables.tf         # Variable definitions
-├── secrets.tf           # Dynamic secret creation
-├── outputs.tf           # Secret ARNs
-└── secrets/             # All secret JSON files (encrypted)
-    ├── app-name/
-    │   ├── development.json
-    │   └── production.json
-    └── another-app/
-        └── api-keys.json
-```
+| Benefit            | Description                               |
+| ------------------ | ----------------------------------------- |
+| Version controlled | Full Git history of all secret changes    |
+| Code review        | PRs show which keys changed (not values)  |
+| Access control     | IAM controls who can decrypt              |
+| Audit trail        | CloudTrail logs every KMS access          |
+| Easy revocation    | Remove IAM access = instant revoke        |
+| No plain text      | Secrets never written to disk unencrypted |
 
-## Setting Up Git-Crypt
+## Step 1: Create a KMS Key
 
-Git-crypt transparently encrypts files when pushing and decrypts when pulling. Only team members with the key can read the secrets.
-
-### Installation
+First, create a dedicated KMS key for secrets encryption:
 
 ```bash
-# macOS
-brew install git-crypt
-
-# Ubuntu
-sudo apt-get install git-crypt
+aws kms create-key --description "Secrets encryption key for SOPS"
 ```
 
-### Initialize in Your Repo
+Create an alias for easier reference:
 
 ```bash
-cd aws-secrets
-git-crypt init
-
-# Export the key - store this securely (1Password, etc.)
-git-crypt export-key ./git-crypt-key
+aws kms create-alias \
+  --alias-name alias/sops-secrets \
+  --target-key-id <key-id-from-above>
 ```
 
-### Configure Which Files to Encrypt
+## Step 2: Set Up IAM Permissions
 
-Create `.gitattributes`:
+Create an IAM policy for team members who need access:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"],
+      "Resource": "arn:aws:kms:REGION:ACCOUNT_ID:key/KEY_ID"
+    }
+  ]
+}
+```
+
+Attach this policy to:
+
+- Individual IAM users who need to edit secrets
+- CI/CD roles that deploy secrets
+
+## Step 3: Install SOPS
+
+On macOS:
+
+```bash
+brew install sops
+```
+
+On Linux:
+
+```bash
+curl -LO https://github.com/getsops/sops/releases/download/v3.8.1/sops-v3.8.1.linux.amd64
+chmod +x sops-v3.8.1.linux.amd64
+sudo mv sops-v3.8.1.linux.amd64 /usr/local/bin/sops
+```
+
+## Step 4: Create Repository Structure
+
+```bash
+mkdir secrets-management
+cd secrets-management
+git init
+```
+
+Create the SOPS configuration file `.sops.yaml`:
+
+```yaml
+creation_rules:
+  - path_regex: secrets/.*\.enc\.json$
+    kms: arn:aws:kms:REGION:ACCOUNT_ID:key/KEY_ID
+```
+
+Create `.gitignore`:
 
 ```
-*.tfvars filter=git-crypt diff=git-crypt
-secrets/**/*.json filter=git-crypt diff=git-crypt
+# Decrypted files (should never exist, but just in case)
+*.dec.json
+*.dec.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
 ```
 
-Now any `.tfvars` files and JSON files in `secrets/` are automatically encrypted.
+Create the secrets directory:
 
-## Terraform Configuration
+```bash
+mkdir -p secrets
+```
 
-### Dynamic Secret Discovery
+## Step 5: Create Your First Encrypted Secret
 
-The key insight: use `fileset()` to automatically discover all JSON files. No need to manually define each secret.
+```bash
+sops secrets/development.enc.json
+```
 
-**secrets.tf**:
+This opens your editor. Add your secrets:
+
+```json
+{
+  "DATABASE_URL": "postgres://user:pass@localhost:5432/db",
+  "API_KEY": "your-secret-api-key",
+  "JWT_SECRET": "your-jwt-secret"
+}
+```
+
+Save and close. SOPS encrypts automatically.
+
+### Using VS Code
+
+```bash
+EDITOR="code --wait" sops secrets/development.enc.json
+```
+
+## Step 6: Set Up Terraform for Deployment
+
+Create `main.tf`:
 
 ```hcl
-locals {
-  secret_files = fileset("${path.module}/secrets", "**/*.json")
+terraform {
+  backend "s3" {
+    bucket         = "your-terraform-state-bucket"
+    key            = "secrets/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-locks"
+  }
 
-  secrets = {
-    for file in local.secret_files :
-    trimsuffix(file, ".json") => {
-      content = file("${path.module}/secrets/${file}")
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    sops = {
+      source  = "carlpett/sops"
+      version = "~> 1.0"
     }
   }
 }
 
-resource "aws_secretsmanager_secret" "this" {
-  for_each = local.secrets
+provider "aws" {
+  region = "us-east-1"
+}
 
-  name        = each.key
-  description = "Managed by Terraform"
+provider "sops" {}
+
+# Read encrypted file
+data "sops_file" "api_development" {
+  source_file = "secrets/development.enc.json"
+}
+
+# Create secret in AWS Secrets Manager
+resource "aws_secretsmanager_secret" "api_development" {
+  name = "api-secrets/development"
 
   tags = {
-    ManagedBy   = "terraform"
-    Environment = var.environment
-    Owner       = var.owner
+    ManagedBy = "terraform"
   }
 }
 
-resource "aws_secretsmanager_secret_version" "this" {
-  for_each = local.secrets
-
-  secret_id     = aws_secretsmanager_secret.this[each.key].id
-  secret_string = each.value.content
+resource "aws_secretsmanager_secret_version" "api_development" {
+  secret_id     = aws_secretsmanager_secret.api_development.id
+  secret_string = data.sops_file.api_development.raw
 }
 ```
 
-**How it works:**
-
-- `secrets/myapp/production.json` becomes AWS secret `myapp/production`
-- Add a new JSON file, run `terraform apply` - done
-- No code changes needed for new secrets
-
-### Backend Configuration
-
-Store Terraform state in S3 with encryption and locking:
-
-**backend.hcl**:
-
-```hcl
-bucket         = "your-terraform-state-bucket"
-key            = "secrets/terraform.tfstate"
-region         = "us-east-1"
-dynamodb_table = "terraform-state-lock"
-encrypt        = true
-```
-
-Initialize with:
+## Step 7: Deploy
 
 ```bash
-terraform init -backend-config=backend.hcl
-```
-
-## Daily Workflow
-
-### Adding a New Secret
-
-1. Create a JSON file in `secrets/`:
-
-```bash
-mkdir -p secrets/my-new-app
-```
-
-Create `secrets/my-new-app/production.json`:
-
-```json
-{
-  "DATABASE_URL": "postgres://...",
-  "API_KEY": "sk_live_..."
-}
-```
-
-2. Commit and create PR:
-
-```bash
-git checkout -b add-my-new-app-secrets
-git add .
-git commit -m "Add my-new-app production secrets"
-git push origin add-my-new-app-secrets
-```
-
-3. After PR approval, apply:
-
-```bash
+terraform init
 terraform plan
 terraform apply
 ```
 
-### Updating an Existing Secret
+## The Developer Workflow
 
-1. Edit the JSON file
-2. Commit, push, create PR
-3. After approval: `terraform apply`
-
-### Importing Existing AWS Secrets
-
-If secrets already exist in AWS:
+### Updating a Secret
 
 ```bash
-# Import the secret
-terraform import 'aws_secretsmanager_secret.this["app/production"]' 'app/production'
+# 1. Create a branch
+git checkout -b update-api-key
 
-# Get version ID
-vid=$(aws secretsmanager get-secret-value --secret-id app/production --query 'VersionId' --output text)
+# 2. Edit the secret
+EDITOR="code --wait" sops secrets/development.enc.json
 
-# Import the version
-terraform import 'aws_secretsmanager_secret_version.this["app/production"]' "app/production|$vid"
+# 3. Commit and push
+git add secrets/
+git commit -m "Rotate API key for payment provider"
+git push -u origin update-api-key
+
+# 4. Create PR for review
+
+# 5. After merge, apply
+git checkout main
+git pull
+terraform apply
 ```
 
-Then sync the local file from AWS:
+### What Reviewers See
 
-```bash
-aws secretsmanager get-secret-value \
-  --secret-id app/production \
-  --query 'SecretString' \
-  --output text | jq . > secrets/app/production.json
+In the PR diff, reviewers see:
+
+```diff
+  "sops": {
+-   "lastmodified": "2024-01-15T10:00:00Z",
++   "lastmodified": "2024-01-16T14:30:00Z",
+    ...
+  },
+- "API_KEY": "ENC[AES256_GCM,data:abc123...,type:str]",
++ "API_KEY": "ENC[AES256_GCM,data:xyz789...,type:str]",
 ```
 
-## Team Onboarding
+They can see:
 
-When a new team member joins:
+- Which keys changed
+- When it changed
+- Who changed it
 
-1. Add them to the private GitHub repository
-2. Share the `git-crypt-key` file securely (via 1Password or similar)
-3. They clone and unlock:
+They cannot see:
 
-```bash
-git clone git@github.com:your-org/aws-secrets.git
-cd aws-secrets
+- Actual secret values
 
-# Files appear as binary gibberish until unlocked
-git-crypt unlock /path/to/git-crypt-key
+## Security Best Practices
 
-# Now files are readable
-```
+### 1. Separate Keys by Environment
 
-After unlocking once, all future `git pull` operations auto-decrypt.
-
-## Accessing Secrets in Applications
-
-### AWS CLI
-
-```bash
-aws secretsmanager get-secret-value \
-  --secret-id myapp/production \
-  --query 'SecretString' \
-  --output text | jq .
-```
-
-### Node.js
-
-```javascript
-const { SecretsManager } = require('@aws-sdk/client-secrets-manager');
-
-const client = new SecretsManager({ region: 'us-east-1' });
-
-async function getSecret(secretId) {
-  const response = await client.getSecretValue({ SecretId: secretId });
-  return JSON.parse(response.SecretString);
-}
-
-const secrets = await getSecret('myapp/production');
-console.log(secrets.DATABASE_URL);
-```
-
-### Kubernetes (External Secrets Operator)
+Use different KMS keys for different environments:
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: myapp-secrets
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: aws-secrets-manager
-    kind: ClusterSecretStore
-  target:
-    name: myapp-secrets
-  data:
-    - secretKey: DATABASE_URL
-      remoteRef:
-        key: myapp/production
-        property: DATABASE_URL
+# .sops.yaml
+creation_rules:
+  - path_regex: secrets/development/.*\.enc\.json$
+    kms: arn:aws:kms:us-east-1:ACCOUNT:key/DEV_KEY_ID
+  - path_regex: secrets/production/.*\.enc\.json$
+    kms: arn:aws:kms:us-east-1:ACCOUNT:key/PROD_KEY_ID
 ```
 
-## Security Considerations
+### 2. Limit Production Access
 
-### What's Protected
+Only give production KMS access to:
 
-- **At rest in GitHub**: Files encrypted by git-crypt
-- **In transit**: HTTPS for GitHub, TLS for AWS
-- **In S3 state**: `encrypt = true` in backend config
-- **In AWS**: Secrets Manager handles encryption
+- Senior engineers
+- CI/CD deployment roles
 
-### Best Practices
+### 3. Enable KMS Key Rotation
 
-1. **Rotate the git-crypt key** when team members leave
-2. **Use separate AWS accounts** for dev/prod if possible
-3. **Enable CloudTrail** for AWS Secrets Manager audit logs
-4. **Review PRs carefully** - the diff shows actual secret values to reviewers
-5. **Never commit the git-crypt key** - it's in `.gitignore`
+```bash
+aws kms enable-key-rotation --key-id KEY_ID
+```
 
-### State File Contains Secrets
+### 4. Monitor with CloudTrail
 
-The Terraform state file contains secret values in plain text. Ensure:
+All KMS operations are logged. Set up alerts for:
 
-- S3 bucket has encryption enabled
-- Bucket access is restricted
-- Consider using a production S3 bucket for state (stricter IAM)
+- Failed decryption attempts
+- Unusual access patterns
+- Access from new IP addresses
+
+## Revoking Access
+
+When someone leaves the team:
+
+```bash
+# Remove their IAM policy attachment
+aws iam detach-user-policy \
+  --user-name departed-user \
+  --policy-arn arn:aws:iam::ACCOUNT:policy/sops-kms-access
+```
+
+Immediately, they can no longer decrypt secrets. No need to:
+
+- Rotate the KMS key
+- Re-encrypt all secrets
+- Change any passwords
+
+## Comparison: Before and After
+
+| Aspect         | Before (Plain Text)  | After (SOPS + KMS)   |
+| -------------- | -------------------- | -------------------- |
+| Git storage    | Unsafe               | Safe (encrypted)     |
+| Code review    | Shows actual secrets | Shows only key names |
+| Access control | All or nothing       | Fine-grained IAM     |
+| Audit          | None                 | Full CloudTrail logs |
+| Offboarding    | Rotate everything    | Remove IAM access    |
+| Compliance     | Fails audits         | Passes audits        |
+
+## Cost
+
+| Component       | Monthly Cost                |
+| --------------- | --------------------------- |
+| KMS key         | ~$1/month per key           |
+| KMS requests    | ~$0.03 per 10,000 requests  |
+| Secrets Manager | ~$0.40 per secret per month |
+
+For most teams: **Under $10/month total.**
+
+## Conclusion
+
+SOPS + AWS KMS gives you:
+
+1. **Git-native workflow** - Version control, PRs, and code review
+2. **Strong encryption** - AWS KMS with audit trails
+3. **Simple access control** - IAM policies
+4. **Easy revocation** - Remove IAM access instantly
+5. **Compliance ready** - Audit logs and access controls
+
+The initial setup takes about an hour. The long-term benefits—security, auditability, and team workflow—are well worth it.
+
+## Quick Reference
+
+| Task               | Command                                           |
+| ------------------ | ------------------------------------------------- |
+| Create/edit secret | `EDITOR="code --wait" sops secrets/file.enc.json` |
+| View secret        | `sops -d secrets/file.enc.json`                   |
+| Deploy to AWS      | `terraform apply`                                 |
+| Rotate KMS key     | `aws kms enable-key-rotation --key-id KEY_ID`     |
 
 ---
 
-_Have questions or improvements? Feel free to reach out._
+_This guide covers the essential setup. For production deployments, consider adding CI/CD automation, multi-region replication, and automated secret rotation._
